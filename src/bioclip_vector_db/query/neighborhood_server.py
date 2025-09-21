@@ -25,23 +25,25 @@ logger = logging.getLogger()
 
 def timer(func):
     """A decorator that prints the time a function takes to run."""
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         # Record the start time
         start_time = time.perf_counter()
-        
+
         # Call the original function and store its result
         value = func(*args, **kwargs)
-        
+
         # Record the end time and calculate the duration
         end_time = time.perf_counter()
         run_time = end_time - start_time
-        
+
         # Print the duration
         logger.info(f"Finished '{func.__name__}' in {run_time:.4f} secs")
-        
+
         # Return the original function's result
         return value
+
     return wrapper
 
 
@@ -52,16 +54,32 @@ class FaissIndexService:
         neighborhood_ids: List[int],
         nprobe: int = 1,
         metadata_db=None,
+        leader_index_file: str = None,
     ):
         self._index_path_pattern = index_path_pattern
         self._indices = {}
         self._nprobe = nprobe
+        self._leader_index = None
 
         if metadata_db is None:
             raise ValueError("metadata_db cannot be None")
         self._metadata_db = metadata_db
 
+        if leader_index_file:
+            self._load_leader_index(leader_index_file)
+
         self._load(neighborhood_ids)
+
+    def _load_leader_index(self, leader_index_file: str):
+        """Loads the leader FAISS index."""
+        try:
+            logger.info(f"Loading leader index file: {leader_index_file}")
+            self._leader_index = faiss.read_index(leader_index_file)
+        except Exception as e:
+            logger.error(
+                f"FATAL: Error loading leader index file. Ensure it is a valid FAISS index. Details: {e}"
+            )
+            sys.exit(1)
 
     def _load(self, neighborhood_ids: List[int]):
         """Loads the FAISS index from the specified path."""
@@ -101,7 +119,7 @@ class FaissIndexService:
                 local_indices[0],
             )
         )
-    
+
     @timer
     def search(
         self, query_vector: list, top_n: int, nprobe: int = 1
@@ -112,9 +130,23 @@ class FaissIndexService:
         ), "Index not loaded"
 
         results = {}
-        for id in self._indices.keys():
-            distances, indices = self._search(query_vector, top_n, id, nprobe)
-            results[id] = (distances, self._map_to_original_ids(id, indices))
+        search_partitions = self._indices.keys()
+
+        if self._leader_index:
+            query_np = np.array([query_vector]).astype("float32")
+            self._leader_index.nprobe = nprobe
+            distances, indices = self._leader_index.search(query_np, nprobe)
+
+            print(indices)
+            search_partitions = indices[0]
+            logger.info(f"Leader index returned partitions: {search_partitions}")
+
+        for id in search_partitions:
+            if id in self._indices:
+                distances, indices = self._search(query_vector, top_n, id, nprobe)
+                results[id] = (distances, self._map_to_original_ids(id, indices))
+            else:
+                logger.warning(f"Partition {id} from leader index not loaded.")
 
         return results
 
@@ -261,6 +293,12 @@ def __main__():
         help="Directory where the index files are stored",
     )
     parser.add_argument(
+        "--leader_index_file",
+        type=str,
+        required=False,
+        help="The leader index file, if the index is distributed",
+    )
+    parser.add_argument(
         "--index_file_prefix",
         type=str,
         required=True,
@@ -292,7 +330,11 @@ def __main__():
     metadata_db = MetadataDatabase(args.index_dir)
 
     svc = FaissIndexService(
-        index_path_pattern, partitions, nprobe=args.nprobe, metadata_db=metadata_db
+        index_path_pattern,
+        partitions,
+        nprobe=args.nprobe,
+        metadata_db=metadata_db,
+        leader_index_file=args.leader_index_file,
     )
 
     SERVER_HOST = "0.0.0.0"
