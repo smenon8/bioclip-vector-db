@@ -52,7 +52,7 @@ class BioclipVectorDatabase:
         model: str = BIOCLIP_V1_MODEL_STR,
     ):
         self._dataset_type = dataset_type
-        self._classifier = TreeOfLifeClassifier(device=_get_device())
+        self._classifier = TreeOfLifeClassifier(device=_get_device(), model=model)
         self._dataset = None
         self._storage = storage
         self._use_local_dataset = local_dataset is not None
