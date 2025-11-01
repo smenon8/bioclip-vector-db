@@ -29,6 +29,7 @@ _LOCAL_DATASET_KEYS = ("__key__", "jpg", "taxontag_com.txt")
 BIOCLIP_V1_MODEL_STR = "hf-hub:imageomics/bioclip"
 BIOCLIP_V2_MODEL_STR = "hf-hub:imageomics/bioclip-2"
 
+
 def _get_device() -> torch.device:
     if torch.cuda.is_available():
         logger.info("CUDA is available")
@@ -48,6 +49,7 @@ class BioclipVectorDatabase:
         storage: StorageInterface,
         split: str,
         local_dataset: str = None,
+        local_embeddings: str = None,
         batch_size: int = 10,
         model: str = BIOCLIP_V1_MODEL_STR,
     ):
@@ -56,11 +58,16 @@ class BioclipVectorDatabase:
         self._dataset = None
         self._storage = storage
         self._use_local_dataset = local_dataset is not None
+        self._use_local_embeddings = local_embeddings is not None
         self._batch_size = batch_size
 
-        self._prepare_dataset(split=split, local_dataset=local_dataset)
+        self._prepare_dataset(
+            split=split, local_dataset=local_dataset, local_embeddings=local_embeddings
+        )
 
-    def _prepare_dataset(self, split: str, local_dataset: str) -> datasets.Dataset:
+    def _prepare_dataset(
+        self, split: str, local_dataset: str, local_embeddings: str = None
+    ) -> datasets.Dataset:
         """Loads the dataset from Hugging Face to memory."""
         if split is None:
             raise ValueError("Split cannot be None. Please provide a valid split.")
@@ -78,7 +85,13 @@ class BioclipVectorDatabase:
                 wds.to_tuple(*_LOCAL_DATASET_KEYS),
                 wds.batched(self._batch_size),
             )
-
+        elif self._use_local_embeddings:
+            logger.info(
+                f"Loading embeddings directly from local disk: {local_embeddings}"
+            )
+            self._dataset = datasets.load_dataset(
+                "parquet", data_files=local_embeddings
+            )
         else:
             self._dataset = datasets.load_dataset(
                 self._dataset_type.value, split=split, streaming=False
@@ -179,9 +192,21 @@ class BioclipVectorDatabase:
 
         logger.info(f"Database loaded with {num_records} records.")
 
+    def _load_embeddings_local(self):
+        num_records = 0
+
+        for data_batch in tqdm(self._dataset):
+            print(data_batch)
+            break
+
+        logger.info(f"Database loaded with {num_records} records.")
+
+
     def load_database(self):
         if self._use_local_dataset:
             self._load_database_local()
+        elif self._use_local_embeddings:
+            self._load_embeddings_local()
         else:
             self._load_database_web()
         self._storage.flush()
@@ -221,6 +246,13 @@ def main():
         type=str,
         default=None,
         help="Path to the local dataset, if unspecified will attempt download form Hugging Face.",
+    )
+
+    parser.add_argument(
+        "--local_embeddings",
+        type=str,
+        default=None,
+        help="Path to the pre-calculated embeddings, if specified will ignore local_datasets",
     )
 
     parser.add_argument(
@@ -266,8 +298,11 @@ def main():
     output_dir = args.output_dir
     split = args.split
     local_dataset = args.local_dataset
+    local_embeddings = args.local_embeddings
     model = args.bioclip_model
 
+    if local_embeddings is not None and local_dataset is not None:
+        raise ValueError("You cannot specify local embeddings and local dataset at the same time")
 
     logger.info(f"Creating database for dataset: {dataset} with split: {split}")
     logger.info(f"Creating database for dataset: {dataset.value}")
@@ -283,7 +318,7 @@ def main():
         dataset_type=dataset,
         collection_dir=output_dir,
         dataset_size=args.dataset_size,
-        write_partition_buffer_size=args.write_partition_buffer_size
+        write_partition_buffer_size=args.write_partition_buffer_size,
     )
     if args.reset:
         logger.warning("Resetting the database..")
@@ -294,6 +329,7 @@ def main():
         storage=storage_obj,
         split=split,
         local_dataset=local_dataset,
+        local_embeddings=local_embeddings,
         batch_size=args.batch_size,
         model=model,
     )
