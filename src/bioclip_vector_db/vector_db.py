@@ -26,6 +26,26 @@ logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT)
 logger = logging.getLogger()
 
 _LOCAL_DATASET_KEYS = ("__key__", "jpg", "taxontag_com.txt")
+_LOCAL_EMBEDDING_KEYS = (
+    "uuid",
+    "emb",
+    "source_dataset",
+    "source_id",
+    "kingdom",
+    "phylum",
+    "class",
+    "order",
+    "family",
+    "genus",
+    "species",
+    "scientific_name",
+    "common_name",
+    "resolution_status",
+    "publisher",
+    "basisOfRecord",
+    "identifier",
+    "img_type",
+)
 BIOCLIP_V1_MODEL_STR = "hf-hub:imageomics/bioclip"
 BIOCLIP_V2_MODEL_STR = "hf-hub:imageomics/bioclip-2"
 
@@ -90,7 +110,7 @@ class BioclipVectorDatabase:
                 f"Loading embeddings directly from local disk: {local_embeddings}"
             )
             self._dataset = datasets.load_dataset(
-                "parquet", data_files=local_embeddings
+                "parquet", data_files=local_embeddings, split=split
             )
         else:
             self._dataset = datasets.load_dataset(
@@ -194,18 +214,26 @@ class BioclipVectorDatabase:
 
     def _load_embeddings_local(self):
         num_records = 0
-
-        for data_batch in tqdm(self._dataset):
-            print(f"~~~~~~~~~~~~ num_records: {num_records}")
-            print(data_batch)
-            num_records+=1
+        ids = []
+        embeddings = []
+        metadatas = []
+        for data_point in tqdm(self._dataset):
+            ids.append(data_point["uuid"])
+            embeddings.append(data_point["emb"])
+            metadatas.append(
+                {
+                    key: data_point[key]
+                    for key in filter(
+                        lambda x: x not in ["uuid", "emb"], _LOCAL_EMBEDDING_KEYS
+                    )
+                }
+            )
+            num_records += 1
+        self._storage.batch_add_embeddings(
+                embeddings=embeddings, ids=ids, metadatas=metadatas
+            )
             
-            if num_records == 1000:
-                break
-
-
         logger.info(f"Database loaded with {num_records} records.")
-
 
     def load_database(self):
         if self._use_local_dataset:
@@ -307,7 +335,9 @@ def main():
     model = args.bioclip_model
 
     if local_embeddings is not None and local_dataset is not None:
-        raise ValueError("You cannot specify local embeddings and local dataset at the same time")
+        raise ValueError(
+            "You cannot specify local embeddings and local dataset at the same time"
+        )
 
     logger.info(f"Creating database for dataset: {dataset} with split: {split}")
     logger.info(f"Creating database for dataset: {dataset.value}")
@@ -344,7 +374,7 @@ def main():
         local_dataset=local_dataset,
         local_embeddings=local_embeddings,
         batch_size=args.batch_size,
-        model=model
+        model=model,
     )
     vdb.load_database()
 
