@@ -312,6 +312,13 @@ def main():
     logger.info(f"Using model: {model}")
     logging.info(f"Approximate dataset size: {args.dataset_size}")
 
+    if model == BIOCLIP_V1_MODEL_STR:
+        dimensions = 512
+    elif model == BIOCLIP_V2_MODEL_STR:
+        dimensions = 768
+    else:
+        raise ValueError(f"Invalid model: {model}")
+
     # Currently only CHROMA backend is supported so hardcoding is fine.
     storage_obj = storage_factory.get_storage(
         storage_type=args.storage,
@@ -319,6 +326,7 @@ def main():
         collection_dir=output_dir,
         dataset_size=args.dataset_size,
         write_partition_buffer_size=args.write_partition_buffer_size,
+        dimensions=dimensions,
     )
     if args.reset:
         logger.warning("Resetting the database..")
@@ -331,7 +339,7 @@ def main():
         local_dataset=local_dataset,
         local_embeddings=local_embeddings,
         batch_size=args.batch_size,
-        model=model,
+        model=model
     )
     vdb.load_database()
 
