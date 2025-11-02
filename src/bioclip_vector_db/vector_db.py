@@ -196,8 +196,13 @@ class BioclipVectorDatabase:
         num_records = 0
 
         for data_batch in tqdm(self._dataset):
+            print(f"~~~~~~~~~~~~ num_records: {num_records}")
             print(data_batch)
-            break
+            num_records+=1
+            
+            if num_records == 1000:
+                break
+
 
         logger.info(f"Database loaded with {num_records} records.")
 
