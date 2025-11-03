@@ -27,8 +27,6 @@ logger = logging.getLogger()
 
 _LOCAL_DATASET_KEYS = ("__key__", "jpg", "taxontag_com.txt")
 _LOCAL_EMBEDDING_KEYS = (
-    "uuid",
-    "emb",
     "source_dataset",
     "source_id",
     "kingdom",
@@ -109,9 +107,11 @@ class BioclipVectorDatabase:
             logger.info(
                 f"Loading embeddings directly from local disk: {local_embeddings}"
             )
-            self._dataset = datasets.load_dataset(
-                "parquet", data_files=local_embeddings, split=split
+            iterable_dataset = datasets.load_dataset(
+                "parquet", data_files=local_embeddings, split=split, streaming=True
             )
+            self._dataset = iterable_dataset.iter(batch_size=self._batch_size)
+            logger.info("Dataset set to stream from local embeddings.")
         else:
             self._dataset = datasets.load_dataset(
                 self._dataset_type.value, split=split, streaming=False
@@ -214,25 +214,17 @@ class BioclipVectorDatabase:
 
     def _load_embeddings_local(self):
         num_records = 0
-        ids = []
-        embeddings = []
-        metadatas = []
-        for data_point in tqdm(self._dataset):
-            ids.append(data_point["uuid"])
-            embeddings.append(data_point["emb"])
-            metadatas.append(
-                {
-                    key: data_point[key]
-                    for key in filter(
-                        lambda x: x not in ["uuid", "emb"], _LOCAL_EMBEDDING_KEYS
-                    )
-                }
+
+        for data_batch in tqdm(self._dataset):
+            metadatas_batch = [
+                {key: data_batch[key][i] for key in _LOCAL_EMBEDDING_KEYS}
+                for i in range(self._batch_size)
+            ]
+            num_records += len(data_batch["uuid"])
+            self._storage.batch_add_embeddings(
+                embeddings=data_batch["emb"], ids=data_batch["uuid"], metadatas=metadatas_batch
             )
-            num_records += 1
-        self._storage.batch_add_embeddings(
-                embeddings=embeddings, ids=ids, metadatas=metadatas
-            )
-            
+
         logger.info(f"Database loaded with {num_records} records.")
 
     def load_database(self):
