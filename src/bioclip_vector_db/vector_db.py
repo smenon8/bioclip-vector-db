@@ -107,10 +107,9 @@ class BioclipVectorDatabase:
             logger.info(
                 f"Loading embeddings directly from local disk: {local_embeddings}"
             )
-            iterable_dataset = datasets.load_dataset(
+            self._dataset = datasets.load_dataset(
                 "parquet", data_files=local_embeddings, split=split, streaming=True
             )
-            self._dataset = iterable_dataset.iter(batch_size=self._batch_size)
             logger.info("Dataset set to stream from local embeddings.")
         else:
             self._dataset = datasets.load_dataset(
@@ -215,7 +214,8 @@ class BioclipVectorDatabase:
     def _load_embeddings_local(self):
         num_records = 0
 
-        for data_batch in tqdm(self._dataset):
+        batched_iterator = self._dataset.iter(batch_size=self._batch_size)
+        for data_batch in tqdm(batched_iterator):
             metadatas_batch = [
                 {key: data_batch[key][i] for key in _LOCAL_EMBEDDING_KEYS}
                 for i in range(self._batch_size)
